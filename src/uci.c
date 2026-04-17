@@ -177,7 +177,7 @@ void uci_go(Board *b, char *args, SearchInfo *info) {
     if (depth == 0) depth = MAX_DEPTH;
 
     // Run search in background would be better, but for now:
-    SearchResult result = search_start(b, info);
+    SearchResult result = search_start(b, info, depth);
 
     char buf[8];
     move_to_uci(&result.best_move, buf, false);

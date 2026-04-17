@@ -62,7 +62,7 @@ void board_load_fen(Board *b, const char *fen) {
     while (fen[i] && fen[i] != ' ') {
         char c = fen[i];
         if (c == '/') {
-            sq -= 16;
+            // sq already correct - sq++ from last piece positioned us at next rank start
         } else if (c >= '1' && c <= '8') {
             sq += c - '0';
         } else {

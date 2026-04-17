@@ -386,10 +386,31 @@ int search_pv(Board *b, int depth, int alpha, int beta, SearchInfo *info, PV *pv
             score = -search_pv(b, new_depth, -beta, -alpha, info, pv, ply + 1);
         } else {
             // Null window search
-            score = -search_pv(b, new_depth, -alpha - 1, -alpha, info, pv, ply + 1);
+            PV child_pv2;
+            memset(&child_pv2, 0, sizeof(child_pv2));
+            score = -search_pv(b, new_depth, -alpha - 1, -alpha, info, &child_pv2, ply + 1);
             if (score > alpha && score < beta) {
                 // Research with full window
-                score = -search_pv(b, new_depth, -beta, -alpha, info, pv, ply + 1);
+                PV child_pv3;
+                memset(&child_pv3, 0, sizeof(child_pv3));
+                score = -search_pv(b, new_depth, -beta, -alpha, info, &child_pv3, ply + 1);
+                if (score > best_score) {
+                    best_score = score;
+                    best_move = m;
+                    pv->pv[ply] = m;
+                    pv->pv_length[ply] = child_pv3.pv_length[ply + 1] + 1;
+                    for (int j = ply + 1; j < child_pv3.pv_length[ply + 1] + 1; j++) {
+                        pv->pv[j] = child_pv3.pv[j];
+                    }
+                }
+            } else if (score > best_score) {
+                best_score = score;
+                best_move = m;
+                pv->pv[ply] = m;
+                pv->pv_length[ply] = child_pv2.pv_length[ply + 1] + 1;
+                for (int j = ply + 1; j < child_pv2.pv_length[ply + 1] + 1; j++) {
+                    pv->pv[j] = child_pv2.pv[j];
+                }
             }
         }
 
@@ -398,6 +419,14 @@ int search_pv(Board *b, int depth, int alpha, int beta, SearchInfo *info, PV *pv
         if (score > best_score) {
             best_score = score;
             best_move = m;
+            // Update PV
+            pv->pv[ply] = m;
+            pv->pv_length[ply] = ply + 1;
+            // Debug
+            if (ply == 0) {
+                char buf[8]; char buf2[8];
+                move_to_uci(&m, buf, false);
+            }
         }
 
         if (score >= beta) {
@@ -432,7 +461,7 @@ int search_pv(Board *b, int depth, int alpha, int beta, SearchInfo *info, PV *pv
 // Iterative Deepening
 //=============================================================================
 
-void search_id_loop(Board *b, SearchInfo *info) {
+void search_id_loop(Board *b, SearchInfo *info, int max_depth) {
     stop_flag = false;
     history_init(&s_history);
     killers_clear(&s_killers);
@@ -440,7 +469,7 @@ void search_id_loop(Board *b, SearchInfo *info) {
 
     int completed_depth = 0;
 
-    for (int depth = 1; depth <= MAX_DEPTH; depth++) {
+    for (int depth = 1; depth <= max_depth && !stop_flag; depth++) {
         init_search_info(info, depth);
 
         int alpha = -30000;
@@ -484,13 +513,14 @@ void search_id_loop(Board *b, SearchInfo *info) {
     info->stop = true;
 }
 
-SearchResult search_start(Board *b, SearchInfo *info) {
+SearchResult search_start(Board *b, SearchInfo *info, int depth) {
     SearchResult result = {0};
 
     tt_age();
     tt_prefetch(b->hash);
 
-    search_id_loop(b, info);
+    int max_depth = (depth > 0) ? depth : MAX_DEPTH;
+    search_id_loop(b, info, max_depth);
 
     result.best_move = s_best_move_this_iter;
     result.best_score = s_best_score_this_iter;

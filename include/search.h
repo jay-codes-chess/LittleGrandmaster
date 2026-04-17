@@ -8,7 +8,7 @@
 // Main Search
 //=============================================================================
 
-SearchResult search_start(Board *b, SearchInfo *info);
+SearchResult search_start(Board *b, SearchInfo *info, int depth);
 void search_stop(void);
 
 // Alpha-beta with PV
@@ -41,7 +41,7 @@ bool reverse_futility(int depth, int beta, int eval);
 int  singularity_search(Board *b, Move *m, int depth, int alpha, int beta, SearchInfo *info, int ply);
 
 // Internal iterative deepening
-void search_id_loop(Board *b, SearchInfo *info);
+void search_id_loop(Board *b, SearchInfo *info, int max_depth);
 
 //=============================================================================
 // Movepick
