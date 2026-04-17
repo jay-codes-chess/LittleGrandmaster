@@ -1,42 +1,46 @@
 #!/usr/bin/env python3
 import subprocess
-import time
-import sys
 
-def send_cmd(proc, cmd):
-    proc.stdin.write(cmd + '\n')
+proc = subprocess.Popen(['./LittleGrandmaster'],
+    stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+# Position
+proc.stdin.write('position startpos\n')
+proc.stdin.flush()
+for _ in range(6):
+    proc.stdout.readline()
+
+# Turn 1
+proc.stdin.write('go depth 5\n')
+proc.stdin.flush()
+bestmove = None
+while True:
+    line = proc.stdout.readline()
+    if not line:
+        break
+    print(line.rstrip())
+    if line.startswith('bestmove'):
+        bestmove = line.split()[1]
+        break
+
+if bestmove:
+    print(f"\nBest move: {bestmove}")
+    moves1 = bestmove
+    # Turn 2
+    proc.stdin.write(f'position startpos moves {moves1}\n')
     proc.stdin.flush()
-
-def read_until(proc, marker, timeout=10):
-    start = time.time()
-    lines = []
-    while time.time() - start < timeout:
+    for _ in range(6):
+        proc.stdout.readline()
+    proc.stdin.write('go depth 5\n')
+    proc.stdin.flush()
+    while True:
         line = proc.stdout.readline()
         if not line:
             break
-        lines.append(line.rstrip())
-        if marker in line:
+        print(line.rstrip())
+        if line.startswith('bestmove'):
             break
-    return lines
 
-def main():
-    proc = subprocess.Popen(['./LittleGrandmaster'],
-        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, 
-        text=True, bufsize=1)
-    
-    for _ in range(10):
-        proc.stdout.readline()
-    
-    send_cmd(proc, 'position startpos')
-    send_cmd(proc, 'go depth 8')
-    
-    lines = read_until(proc, 'bestmove', timeout=20)
-    for l in lines:
-        print(l)
-    
-    proc.stdin.write('quit\n')
-    proc.stdin.flush()
-    proc.wait()
-
-if __name__ == '__main__':
-    main()
+proc.stdin.write('quit\n')
+proc.stdin.flush()
+proc.wait()
