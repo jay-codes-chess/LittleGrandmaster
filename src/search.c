@@ -201,56 +201,52 @@ bool is_killer(const KillerTable *kt, Move *m, int ply) {
 // Quiescence Search
 //=============================================================================
 
+// Minimal qsearch - captures only with hard ply limit
 int search_quiescence(Board *b, int alpha, int beta, SearchInfo *info, int ply) {
+    // Hard ply limit - prevent infinite recursion
+    if (ply >= 6) return evaluate(b);
+    
     info->nodes++;
-
-    // Standing pat
+    
+    // Standing pat score
     int stand_pat = evaluate(b);
-    if (ply > MAX_DEPTH - 1) return stand_pat;
-
     if (stand_pat >= beta) return beta;
     if (stand_pat > alpha) alpha = stand_pat;
-
-    // Delta pruning
-    if (stand_pat < alpha - 900) return alpha;
-
-    Movelist ml;
-    generate_captures(b, &ml);
-    score_moves_qsearch(&ml, b);
-
-    int legal = 0;
-    for (int i = 0; i < ml.count; i++) {
-        pick_best(&ml, i);
-
-        // SEE pruning
-        if (ml.moves[i].flags & FLAG_CAPTURE) {
-            if (!see_sign(b, &ml.moves[i])) continue;
-        }
-
-        // Delta pruning for captures
-        int capture_val = 0;
-        if (ml.moves[i].captured) {
-            capture_val = pesto_values_mg[ml.moves[i].captured & 7];
-        }
-        if (stand_pat + capture_val + 200 < alpha) continue;
-
-        Board copy = *b;
-        board_do_move(b, &ml.moves[i]);
-
+    
+    // Generate captures
+    Movelist captures;
+    generate_captures(b, &captures);
+    score_moves_qsearch(&captures, b);
+    
+    // Limit captures to prevent explosion
+    // At qsearch ply 0-1: search more captures
+    // At qsearch ply 2+: fewer captures
+    int max_captures = (ply < 2) ? 8 : 4;
+    if (captures.count > max_captures) captures.count = max_captures;
+    
+    int best_score = alpha;
+    
+    for (int i = 0; i < captures.count; i++) {
+        pick_best(&captures, i);
+        
+        Board board_copy = *b;
+        board_do_move(b, &captures.moves[i]);
+        
+        // Skip moves that leave us in check
         if (board_in_check(b)) {
-            *b = copy;
+            *b = board_copy;
             continue;
         }
-
-        legal++;
+        
         int score = -search_quiescence(b, -beta, -alpha, info, ply + 1);
-        *b = copy;
-
-        if (score >= beta) return beta;
-        if (score > alpha) alpha = score;
+        *b = board_copy;
+        
+        if (score > best_score) best_score = score;
+        if (best_score >= beta) return best_score;
+        if (best_score > alpha) alpha = best_score;
     }
-
-    return alpha;
+    
+    return best_score;
 }
 
 //=============================================================================
@@ -260,6 +256,9 @@ int search_quiescence(Board *b, int alpha, int beta, SearchInfo *info, int ply) 
 int search_pv(Board *b, int depth, int alpha, int beta, SearchInfo *info, PV *pv, int ply) {
     if (stop_flag) return 0;
 
+    // Hard ply limit to prevent stack overflow - must be before any local allocations
+    if (ply >= 6) return evaluate(b);
+
     info->nodes++;
     if (ply > info->seldepth) info->seldepth = ply;
 
@@ -268,21 +267,23 @@ int search_pv(Board *b, int depth, int alpha, int beta, SearchInfo *info, PV *pv
     if (ply && is_fifty_moves(b)) return 0;
 
     if (depth <= 0) {
-        return search_quiescence(b, alpha, beta, info, ply);
+            return search_quiescence(b, alpha, beta, info, ply);
     }
 
     bool in_check = board_in_check(b);
     if (in_check) depth++;  // Check extension
 
-    // Mate distance pruning
-    int mate_value = mate_from_score(ply);
-    if (mate_value < beta) {
-        beta = mate_value;
-        if (alpha >= mate_value) return mate_value;
-    }
-    if (mate_value > alpha) {
-        alpha = mate_value;
-        if (beta <= mate_value) return mate_value;
+    // Mate distance pruning (only at ply >= 6 to prevent immediate -30000 at root)
+    if (ply >= 6) {
+        int mate_value = mate_from_score(ply);
+        if (mate_value < beta) {
+            beta = mate_value;
+            if (alpha >= mate_value) return mate_value;
+        }
+        if (mate_value > alpha) {
+            alpha = mate_value;
+            if (beta <= mate_value) return mate_value;
+        }
     }
 
     // Transposition table probe
