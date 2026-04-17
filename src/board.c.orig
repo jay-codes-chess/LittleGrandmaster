@@ -55,24 +55,22 @@ void board_reset(Board *b) {
 void board_load_fen(Board *b, const char *fen) {
     board_init(b);
 
-    int r = 7, f = 0;  // Start at rank 8 (index 7), file 0 (a)
+    int sq = A8;
     int i = 0;
 
     // Piece placement
     while (fen[i] && fen[i] != ' ') {
         char c = fen[i];
         if (c == '/') {
-            r--;
-            f = 0;
+            // sq already correct - sq++ from last piece positioned us at next rank start
         } else if (c >= '1' && c <= '8') {
-            f += c - '0';
+            sq += c - '0';
         } else {
             int piece = piece_char_to_piece(c);
             if (piece != EMPTY) {
-                int sq = SQUARE(f, r);
-                board_add_piece(b, sq, piece);
+                        board_add_piece(b, sq, piece);
             }
-            f++;
+            sq++;
         }
         i++;
     }

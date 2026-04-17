@@ -419,11 +419,11 @@ void move_to_san(const Board *b, Move *m, char *buf) {
         return;
     }
 
-    char piece_char = ".PNBRQK"[m->piece & 7];
+    char piece_char = ".PNBRQK"[PT(m->piece)];
     char to_buf[8];
     move_to_uci(m, to_buf, false);
 
-    if ((m->piece & 7) == 1) {  // Pawn
+    if ((PT(m->piece)) == 1) {  // Pawn
         if (m->flags & FLAG_CAPTURE) {
             sprintf(buf, "%cx%s", 'a' + FILE(m->from), to_buf + 2);
         } else {
@@ -454,7 +454,7 @@ void score_moves(Movelist *ml, const Board *b, Move *tt_move, int depth) {
         if (tt_move && move_equal(m, tt_move)) {
             score = 200000;
         } else if (m->flags & FLAG_CAPTURE) {
-            score = MVV_LVA_VICTIM[m->captured & 7] - MVV_LVA_ATTACKER[m->piece & 7];
+            score = MVV_LVA_VICTIM[PT(m->captured)] - MVV_LVA_ATTACKER[PT(m->piece)];
             score += 100000;
         }
         m->score = score;
@@ -466,7 +466,7 @@ void score_moves_qsearch(Movelist *ml, const Board *b) {
     for (int i = 0; i < ml->count; i++) {
         Move *m = &ml->moves[i];
         m->score = (m->flags & FLAG_CAPTURE) ?
-            MVV_LVA_VICTIM[m->captured & 7] - MVV_LVA_ATTACKER[m->piece & 7] : 0;
+            MVV_LVA_VICTIM[PT(m->captured)] - MVV_LVA_ATTACKER[PT(m->piece)] : 0;
     }
 }
 
@@ -516,13 +516,13 @@ int see(const Board *b, Move *m) {
     occ &= ~SQUARES[to];
     occ |= SQUARES[from];
 
-    if ((piece & 7) == 1 && to == b->ep_square) {
+    if ((PT(piece)) == 1 && to == b->ep_square) {
         occ &= ~SQUARES[b->side == WHITE ? to - 8 : to + 8];
     }
 
     int gain[32];
     int n = 0;
-    gain[n++] = SEE_VALS[captured & 7];
+    gain[n++] = SEE_VALS[PT(captured)];
 
     bool side = !b->side;
     U64 attackers = board_attackers_to(b, to, occ) & occ;
@@ -600,8 +600,7 @@ int see_sign(const Board *b, Move *m) {
 static uint64_t perft_rec(Board *b, int depth) {
     if (depth == 0) return 1;
     Movelist ml;
-    generate_legal(b, &ml);
-    if (depth == 1) return ml.count;
+    generate_legal(b, &ml);    if (depth == 1) return ml.count;
 
     uint64_t nodes = 0;
     for (int i = 0; i < ml.count; i++) {

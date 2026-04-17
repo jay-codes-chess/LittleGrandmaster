@@ -1,0 +1,369 @@
+//=============================================================================
+// LittleGrandmaster Bitboard System
+// Adapted from Rodent II by Pawel Koziol
+//=============================================================================
+
+#include <stdlib.h>
+#include <stdio.h>
+#include "bitboard.h"
+
+//=============================================================================
+// Constants (from Rodent II)
+//=============================================================================
+
+static const U64 RANK_1_BB = 0x00000000000000FFULL;
+static const U64 RANK_2_BB = 0x000000000000FF00ULL;
+static const U64 RANK_3_BB = 0x0000000000FF0000ULL;
+static const U64 RANK_4_BB = 0x00000000FF000000ULL;
+static const U64 RANK_5_BB = 0x000000FF00000000ULL;
+static const U64 RANK_6_BB = 0x0000FF0000000000ULL;
+static const U64 RANK_7_BB = 0x00FF000000000000ULL;
+static const U64 RANK_8_BB = 0xFF00000000000000ULL;
+
+static const U64 FILE_A_BB = 0x0101010101010101ULL;
+static const U64 FILE_B_BB = 0x0202020202020202ULL;
+static const U64 FILE_C_BB = 0x0404040404040404ULL;
+static const U64 FILE_D_BB = 0x0808080808080808ULL;
+static const U64 FILE_E_BB = 0x1010101010101010ULL;
+static const U64 FILE_F_BB = 0x2020202020202020ULL;
+static const U64 FILE_G_BB = 0x4040404040404040ULL;
+static const U64 FILE_H_BB = 0x8080808080808080ULL;
+
+static const U64 DIAG_A1H8_BB = 0x8040201008040201ULL;
+static const U64 DIAG_A8H1_BB = 0x0102040810204080ULL;
+static const U64 DIAG_B8H2_BB = 0x0204081020408000ULL;
+
+#define DIAG_B8H2_BB_MUL DIAG_B8H2_BB
+#define FILE_B_BB_MUL   FILE_B_BB
+
+//=============================================================================
+// Precomputed Tables
+//=============================================================================
+
+U64 SQUARES[64];
+U64 FILES[8];
+U64 RANKS[8];
+U64 KNIGHT_SPAN[64];
+U64 KING_SPAN[64];
+U64 PAWN_ATTACKS_W[64];
+U64 PAWN_ATTACKS_B[64];
+U64 CENTER;
+U64 BIG_CENTER;
+
+// Rodent-style sliding attack tables
+static U64 LINE_MASK[4][64];    // 0=rank, 1=file, 2=diag, 3=anti-diag
+static U64 ATTACKS[4][64][64]; // attacks[direction][square][key]
+static U64 P_ATTACKS[2][64];   // pawn attacks [color][square]
+static U64 N_ATTACKS[64];      // knight attacks
+static U64 K_ATTACKS[64];     // king attacks
+
+//=============================================================================
+// Bit Operations
+//=============================================================================
+
+static int FIRST_ONE(U64 b) {
+    // Isolates LSB and converts to square index
+    // Uses the magic multiplier trick from chess programming wiki
+    static const int bit_table[64] = {
+         0,  1,  2,  7,  3, 13,  8, 19,
+         4, 25, 14, 28,  9, 34, 20, 40,
+         5, 17, 26, 38, 15, 46, 29, 48,
+        10, 31, 35, 54, 21, 50, 41, 57,
+        63,  6, 12, 18, 24, 27, 33, 39,
+        16, 37, 45, 47, 30, 53, 49, 56,
+        62, 11, 23, 32, 36, 44, 52, 55,
+        61, 22, 43, 51, 60, 42, 59, 58
+    };
+    return bit_table[(((b & (~b + 1)) * 0x0218A392CD3D5DBFULL) >> 58) & 63];
+}
+
+static int popcnt(U64 b) {
+    return __builtin_popcountll(b);
+}
+
+//=============================================================================
+// Magic Index Functions (from Rodent II)
+// These use multiplication tricks to map occupancy patterns to 0-63 keys
+//=============================================================================
+
+// Get rank occupancy index (0-63) for rook at sq
+static int RANK_INDEX(U64 occ, int sq) {
+    // Shift occ right so that bit 0 = file 0 of the rank
+    // (070 & sq) = (sq & 7) << 3 = file * 8... no wait
+    // 070 is octal = 56 decimal = file * 8 + rank
+    // Actually 070 = 56 decimal = file*8 + rank where file and rank are in octal
+    // With file = sq & 7, rank = sq >> 3
+    // 070 & sq = (sq & 7) | ((sq & 070)...)
+    // 
+    // Let's just use: file = sq & 7, so we want to shift right by (file + 1)
+    // to get the bits to the RIGHT of the square on that rank
+    return (int)(((occ >> ((sq & 7) + 1)) & 0x3F));
+}
+
+// Get file occupancy index using magic multiplication
+static int FILE_INDEX(U64 occ, int sq) {
+    // Extract bits from the file, multiply by magic, shift
+    return (int)((((occ >> (sq & 7)) & FILE_A_BB) * DIAG_B8H2_BB) >> 58);
+}
+
+// Get diagonal occupancy index
+static int DIAG_INDEX(U64 occ, int sq) {
+    return (int)((((occ & LINE_MASK[2][sq]) * FILE_B_BB) >> 58));
+}
+
+// Get anti-diagonal occupancy index
+static int ANTI_INDEX(U64 occ, int sq) {
+    return (int)((((occ & LINE_MASK[3][sq]) * FILE_B_BB) >> 58));
+}
+
+// Convenience macros
+#define L1(occ, sq) ATTACKS[0][sq][RANK_INDEX(occ, sq)]
+#define L2(occ, sq) ATTACKS[1][sq][FILE_INDEX(occ, sq)]
+#define L3(occ, sq) ATTACKS[2][sq][DIAG_INDEX(occ, sq)]
+#define L4(occ, sq) ATTACKS[3][sq][ANTI_INDEX(occ, sq)]
+#define R_ATTACKS(occ, sq) (L1(occ, sq) | L2(occ, sq))
+#define B_ATTACKS(occ, sq) (L3(occ, sq) | L4(occ, sq))
+#define Q_ATTACKS(occ, sq) (R_ATTACKS(occ, sq) | B_ATTACKS(occ, sq))
+
+//=============================================================================
+// Sliding Attack Lookups
+//=============================================================================
+
+U64 bb_rook_attacks(int sq, U64 occ) {
+    return R_ATTACKS(occ, sq);
+}
+
+U64 bb_bishop_attacks(int sq, U64 occ) {
+    // Use naive computation for bishops (fast enough - only 4 directions, max 7 squares each)
+    U64 attacks = 0;
+    int c = FILE(sq), r = RANK(sq);
+    // NE diagonal
+    for (int nc = c+1, nr = r+1; nc < 8 && nr < 8; nc++, nr++) {
+        attacks |= SQUARES[SQUARE(nc, nr)];
+        if (occ & SQUARES[SQUARE(nc, nr)]) break;
+    }
+    // NW diagonal
+    for (int nc = c-1, nr = r+1; nc >= 0 && nr < 8; nc--, nr++) {
+        attacks |= SQUARES[SQUARE(nc, nr)];
+        if (occ & SQUARES[SQUARE(nc, nr)]) break;
+    }
+    // SE diagonal
+    for (int nc = c+1, nr = r-1; nc < 8 && nr >= 0; nc++, nr--) {
+        attacks |= SQUARES[SQUARE(nc, nr)];
+        if (occ & SQUARES[SQUARE(nc, nr)]) break;
+    }
+    // SW diagonal
+    for (int nc = c-1, nr = r-1; nc >= 0 && nr >= 0; nc--, nr--) {
+        attacks |= SQUARES[SQUARE(nc, nr)];
+        if (occ & SQUARES[SQUARE(nc, nr)]) break;
+    }
+    return attacks;
+}
+
+//=============================================================================
+// Initialization
+//=============================================================================
+
+void bb_init(void) {
+    // SQUARES - bit 0 = A1, bit 1 = B1, etc.
+    for (int i = 0; i < 64; i++) SQUARES[i] = 1ULL << i;
+
+    // FILES
+    for (int f = 0; f < 8; f++) FILES[f] = 0;
+    for (int f = 0; f < 8; f++)
+        for (int r = 0; r < 8; r++)
+            FILES[f] |= SQUARES[SQUARE(f, r)];
+
+    // RANKS
+    for (int r = 0; r < 8; r++) RANKS[r] = 0;
+    for (int r = 0; r < 8; r++)
+        for (int f = 0; f < 8; f++)
+            RANKS[r] |= SQUARES[SQUARE(f, r)];
+
+    // Knight attacks
+    for (int sq = 0; sq < 64; sq++) {
+        int c = FILE(sq), r = RANK(sq);
+        U64 attacks = 0;
+        static const int off[8][2] = {{1,2},{2,1},{-1,2},{-2,1},{1,-2},{2,-1},{-1,-2},{-2,-1}};
+        for (int i = 0; i < 8; i++) {
+            int nc = c + off[i][0], nr = r + off[i][1];
+            if (nc >= 0 && nc < 8 && nr >= 0 && nr < 8)
+                attacks |= SQUARES[SQUARE(nc, nr)];
+        }
+        KNIGHT_SPAN[sq] = attacks;
+    }
+
+    // King attacks
+    for (int sq = 0; sq < 64; sq++) {
+        int c = FILE(sq), r = RANK(sq);
+        U64 attacks = 0;
+        for (int dc = -1; dc <= 1; dc++)
+            for (int dr = -1; dr <= 1; dr++)
+                if (dc || dr)
+                    if (c + dc >= 0 && c + dc < 8 && r + dr >= 0 && r + dr < 8)
+                        attacks |= SQUARES[SQUARE(c + dc, r + dr)];
+        KING_SPAN[sq] = attacks;
+    }
+
+    // Pawn attacks
+    for (int sq = 0; sq < 64; sq++) {
+        int c = FILE(sq), r = RANK(sq);
+        PAWN_ATTACKS_W[sq] = 0;
+        PAWN_ATTACKS_B[sq] = 0;
+        if (c > 0 && r < 7) PAWN_ATTACKS_W[sq] |= SQUARES[SQUARE(c - 1, r + 1)];
+        if (c < 7 && r < 7) PAWN_ATTACKS_W[sq] |= SQUARES[SQUARE(c + 1, r + 1)];
+        if (c > 0 && r > 0) PAWN_ATTACKS_B[sq] |= SQUARES[SQUARE(c - 1, r - 1)];
+        if (c < 7 && r > 0) PAWN_ATTACKS_B[sq] |= SQUARES[SQUARE(c + 1, r - 1)];
+    }
+
+    // Center
+    CENTER = (FILES[3] | FILES[4]) & (RANKS[3] | RANKS[4]);
+    BIG_CENTER = CENTER
+        | (RANKS[2] & (FILES[2] | FILES[3] | FILES[4] | FILES[5]))
+        | (RANKS[5] & (FILES[2] | FILES[3] | FILES[4] | FILES[5]));
+
+    // Initialize sliding attack tables (Rodent II style)
+    bb_init_sliding();
+}
+
+void bb_init_sliding(void) {
+    // Initialize all attacks to 0
+    for (int d = 0; d < 4; d++)
+        for (int sq = 0; sq < 64; sq++)
+            for (int k = 0; k < 64; k++)
+                ATTACKS[d][sq][k] = 0;
+
+    // Build line masks
+    for (int sq = 0; sq < 64; sq++) {
+        int c = FILE(sq);
+        int r = RANK(sq);
+        
+        // Rank mask: all squares on the same rank
+        LINE_MASK[0][sq] = RANKS[r];
+        
+        // File mask: all squares on the same file
+        LINE_MASK[1][sq] = FILES[c];
+        
+        // Diagonal mask (a1-h8): squares where (file - rank) is constant
+        int d = c - r;
+        if (d >= 0)
+            LINE_MASK[2][sq] = DIAG_A1H8_BB >> (d * 8);
+        else
+            LINE_MASK[2][sq] = DIAG_A1H8_BB << ((-d) * 8);
+        
+        // Anti-diagonal mask (a8-h1): squares where (file + rank) is constant
+        int ad = c - (7 - r);
+        if (ad >= 0)
+            LINE_MASK[3][sq] = DIAG_A8H1_BB >> (ad * 8);
+        else
+            LINE_MASK[3][sq] = DIAG_A8H1_BB << ((-ad) * 8);
+    }
+    
+    // Generate attack tables
+    // Directions: 0=rank, 1=file, 2=diag, 3=anti-diag
+    // Each direction has 2 sub-directions (+ and -)
+    static const int dirs[4][2] = {
+        {1, -1},   // rank: +file, -file
+        {16, -16}, // file: +rank, -rank
+        {17, -17}, // diag: +file+rank, -file-rank
+        {15, -15}  // anti: +file-rank, -file+rank
+    };
+    
+    for (int d = 0; d < 4; d++) {
+        for (int sq = 0; sq < 64; sq++) {
+            for (int k = 0; k < 64; k++) {
+                U64 att = 0;
+                
+                // Generate attacks for both sub-directions
+                for (int sub = 0; sub < 2; sub++) {
+                    // Start from the square
+                    int x88 = ((sq >> 3) << 4) | (sq & 7); // map to 0x88 representation
+                    int step = dirs[d][sub];
+                    
+                    while (1) {
+                        x88 += step;
+                        
+                        // Check if off board (0x88 technique)
+                        if (x88 & 0x88) break;
+                        
+                        // Convert back to 0-63
+                        int y = ((x88 & 0x70) >> 1) | (x88 & 7);
+                        
+                        att |= SQUARES[y];
+                        
+                        // Check if this square blocks (using the key)
+                        // For each direction, the key encodes which squares are blocked
+                        // We need to check if the blocking square's index in that direction
+                        // is marked in the key
+                        
+                        // Determine the index of this square in this direction
+                        int block_idx;
+                        if (d == 0) {
+                            // Rank: index = file of y
+                            block_idx = y & 7;
+                        } else if (d == 1) {
+                            // File: index = rank of y
+                            block_idx = y >> 3;
+                        } else if (d == 2) {
+                            // Diagonal: index = (file + rank) = DIAG_IDX
+                            block_idx = (y & 7) + (y >> 3);
+                        } else {
+                            // Anti-diagonal: index = (file + 7 - rank)
+                            block_idx = (y & 7) + 7 - (y >> 3);
+                        }
+                        
+                        // If this index is set in k, it's a blocker
+                        if (block_idx < 64 && (k & (1 << block_idx)))
+                            break;
+                    }
+                }
+                
+                ATTACKS[d][sq][k] = att;
+            }
+        }
+    }
+    
+    // Also init knight and king attacks into the global arrays
+    for (int sq = 0; sq < 64; sq++) {
+        N_ATTACKS[sq] = KNIGHT_SPAN[sq];
+        K_ATTACKS[sq] = KING_SPAN[sq];
+    }
+}
+
+//=============================================================================
+// Line / Between
+//=============================================================================
+
+U64 bb_line(int s1, int s2) {
+    U64 l = 0;
+    int dc = FILE(s2) - FILE(s1);
+    int dr = RANK(s2) - RANK(s1);
+    if (dc == 0 || dr == 0 || abs(dc) == abs(dr)) {
+        int c = FILE(s1), r = RANK(s1);
+        int nc = c, nr = r;
+        while (1) {
+            l |= SQUARES[SQUARE(nc, nr)];
+            if (nc == FILE(s2) && nr == RANK(s2)) break;
+            nc += (dc > 0) - (dc < 0);
+            nr += (dr > 0) - (dr < 0);
+        }
+        l &= ~SQUARES[s1] & ~SQUARES[s2];
+    }
+    return l;
+}
+
+U64 bb_between(int s1, int s2) {
+    U64 b = 0;
+    int dc = FILE(s2) - FILE(s1);
+    int dr = RANK(s2) - RANK(s1);
+    if (dc == 0 || dr == 0 || abs(dc) == abs(dr)) {
+        int c = FILE(s1) + ((dc > 0) ? 1 : (dc < 0) ? -1 : 0);
+        int r = RANK(s1) + ((dr > 0) ? 1 : (dr < 0) ? -1 : 0);
+        while (c >= 0 && c < 8 && r >= 0 && r < 8 && (c != FILE(s2) || r != RANK(s2))) {
+            b |= SQUARES[SQUARE(c, r)];
+            c += (dc > 0) ? 1 : (dc < 0) ? -1 : 0;
+            r += (dr > 0) ? 1 : (dr < 0) ? -1 : 0;
+        }
+    }
+    return b;
+}
