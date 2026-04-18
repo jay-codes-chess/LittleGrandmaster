@@ -12,7 +12,7 @@ SearchResult search_start(Board *b, SearchInfo *info, int depth);
 void search_stop(void);
 
 // Alpha-beta with PV
-int  search_pv(Board *b, int depth, int alpha, int beta, SearchInfo *info, PV *pv, int ply);
+int  search_pv(Board *b, int depth, int alpha, int beta, SearchInfo *info, PV *pv, int ply, Move singular_move);
 int  search_quiescence(Board *b, int alpha, int beta, SearchInfo *info, int ply);
 
 // Internal iterative deepening

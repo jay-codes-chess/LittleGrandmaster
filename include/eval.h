@@ -61,8 +61,25 @@ static const int PASSED_PAWN_EG[2][8] = {
 #define OUTPOST_MAX     24
 
 // King safety
-#define KING_ATTACK_WEIGHT  5  // weight per attack on king zone
-#define KING_SHELTER_BASE  20  // base bonus for pawn shield
+#define KING_ATTACK_WEIGHT   5  // weight per attack on king zone
+#define KING_SHELTER_BASE   20  // base bonus for pawn shield
+
+// Eval hash table
+#define EVAL_HASH_BITS  18
+#define EVAL_HASH_SIZE  (1 << EVAL_HASH_BITS)
+#define EVAL_HASH_MASK  (EVAL_HASH_SIZE - 1)
+
+typedef struct {
+    uint64_t key;
+    int16_t score;
+} EvalHashEntry;
+
+extern EvalHashEntry g_eval_hash[EVAL_HASH_SIZE];
+
+// Eval hash functions
+void eval_hash_init(void);
+int  eval_hash_probe(uint64_t hash, int *score);
+void eval_hash_store(uint64_t hash, int score);
 
 int material_score(const Board *b);
 int material_score_eg(const Board *b);

@@ -1,8 +1,59 @@
 #include <stdio.h>
 #include <string.h>
+#include <stdint.h>
 #include "eval.h"
 #include "board.h"
 #include "bitboard.h"
+
+//=============================================================================
+// Eval Hash Table
+//=============================================================================
+
+EvalHashEntry g_eval_hash[EVAL_HASH_SIZE];
+
+void eval_hash_init(void) {
+    memset(g_eval_hash, 0, sizeof(g_eval_hash));
+}
+
+int eval_hash_probe(uint64_t hash, int *score) {
+    EvalHashEntry *e = &g_eval_hash[hash & EVAL_HASH_MASK];
+    if (e->key == hash) {
+        *score = e->score;
+        return 1;
+    }
+    return 0;
+}
+
+void eval_hash_store(uint64_t hash, int score) {
+    EvalHashEntry *e = &g_eval_hash[hash & EVAL_HASH_MASK];
+    e->key = hash;
+    e->score = (int16_t)score;
+}
+
+//=============================================================================
+// Forward Declarations (all static helpers before use)
+//=============================================================================
+
+static int draw_factor(const Board *b, bool side);
+static int eval_file_shelter(const Board *b, bool side, U64 file_pawns);
+static int eval_file_storm(const Board *b, bool side, U64 file_pawns);
+
+int calc_phase(const Board *b);
+int material_score(const Board *b);
+int material_score_eg(const Board *b);
+int pawn_structure(const Board *b);
+int doubled_pawns(const Board *b, bool side);
+int isolated_pawns(const Board *b, bool side);
+int backward_pawns(const Board *b, bool side);
+int passed_pawn_score(const Board *b, bool side, int sq);
+int passed_pawns(const Board *b, bool side);
+int bishop_pair_score(const Board *b, bool side);
+int mobility_score(const Board *b, bool side);
+int rook_open_file(const Board *b, bool side, int sq);
+int rook_semiopen(const Board *b, bool side, int sq);
+int knight_outpost_score(const Board *b, bool side, int sq);
+int bishop_outpost_score(const Board *b, bool side, int sq);
+int king_safety(const Board *b, bool side);
 
 //=============================================================================
 // PeSTO Material Values
@@ -248,6 +299,12 @@ int evaluate(const Board *b) {
 int evaluate_tapered(const Board *b) {
     int phase = calc_phase(b);
 
+    // Try eval hash first
+    int cached;
+    if (eval_hash_probe(b->hash, &cached)) {
+        return b->side ? cached : -cached;
+    }
+
     int mg = 0, eg = 0;
 
     // Material
@@ -330,14 +387,51 @@ int evaluate_tapered(const Board *b) {
         while (b_rooks) mg -= rook_open_file(b, BLACK, pop_lsb(&b_rooks));
     }
 
+    // Rook on 7th rank (attacking enemy pawns or cutting off king)
+    {
+        U64 w_rooks = b->rooks & b->white;
+        while (w_rooks) {
+            int sq = pop_lsb(&w_rooks);
+            if (RANK(sq) == 6) {  // 7th rank (white's perspective)
+                bool enemy_pawns_on_7 = (b->pawns & b->black & RANKS[6]) != 0;
+                bool enemy_king_on_8 = (b->kings & b->black & RANKS[7]) != 0;
+                if (enemy_pawns_on_7 || enemy_king_on_8) {
+                    mg += 16; eg += 32;
+                }
+            }
+        }
+        U64 b_rooks = b->rooks & b->black;
+        while (b_rooks) {
+            int sq = pop_lsb(&b_rooks);
+            if (RANK(sq) == 1) {  // 7th rank (black's perspective)
+                bool enemy_pawns_on_2 = (b->pawns & b->white & RANKS[1]) != 0;
+                bool enemy_king_on_1 = (b->kings & b->white & RANKS[0]) != 0;
+                if (enemy_pawns_on_2 || enemy_king_on_1) {
+                    mg -= 16; eg -= 32;
+                }
+            }
+        }
+    }
+
     // King safety
     mg += king_safety(b, WHITE) - king_safety(b, BLACK);
 
     // Tapered eval
     int score = (mg * phase + eg * (24 - phase)) / 24;
 
-    // Tempo bonus
-    score += 10;
+    // Tempo bonus (both mg and eg, like Rodent)
+    score += (b->side ? 10 : -10);
+
+    // Draw scaling
+    int df = draw_factor(b, b->side);
+    score = (score * df) / 64;
+
+    // Clamp to mate range
+    if (score >  29000) score =  29000;
+    if (score < -29000) score = -29000;
+
+    // Store in eval hash
+    eval_hash_store(b->hash, b->side ? score : -score);
 
     return b->side ? score : -score;
 }
@@ -641,15 +735,100 @@ int bishop_outpost_score(const Board *b, bool side, int sq) {
 }
 
 //=============================================================================
-// King Safety
 //=============================================================================
+// Draw Scaling
+//=============================================================================
+
+// Scale down eval in drawish endgames (Rodent style)
+static int draw_factor(const Board *b, bool side) {
+    int own_minors = popcount(b->knights & (side ? b->white : b->black));
+    int own_rooks  = popcount(b->rooks   & (side ? b->white : b->black));
+    int own_queens = popcount(b->queens  & (side ? b->white : b->black));
+    int own_pawns  = popcount(b->pawns   & (side ? b->white : b->black));
+    int opp_minors = popcount(b->knights & (side ? b->black : b->white));
+    int opp_rooks  = popcount(b->rooks   & (side ? b->black : b->white));
+    int opp_queens = popcount(b->queens  & (side ? b->black : b->white));
+    int opp_pawns  = popcount(b->pawns   & (side ? b->black : b->white));
+
+    // KB vs KB (same color) = draw
+    if (own_minors == 1 && own_rooks == 0 && own_queens == 0 && own_pawns == 0 &&
+        opp_minors == 1 && opp_rooks == 0 && opp_queens == 0 && opp_pawns == 0) {
+        // Check if bishops are same color
+        return 0;  // drawish
+    }
+
+    // Lone king vs king + minor = drawish
+    if (own_minors + own_rooks + own_queens + own_pawns == 0 &&
+        opp_minors + opp_rooks + opp_queens + opp_pawns == 1) {
+        return 0;
+    }
+
+    // K + pawns vs K = scale by pawn proximity to promotion
+    if (own_rooks + own_queens + own_minors == 0 && own_pawns > 0 &&
+        opp_rooks + opp_queens + opp_minors + opp_pawns == 0) {
+        // Not perfectly implemented, default to moderate scaling
+        return 16;
+    }
+
+    return 64;  // no scaling
+}
+
+//=============================================================================
+// King Safety (Rodent-style shelter + storm)
+//=============================================================================
+
+// File shelter bonus based on pawn rank in front of king
+static int eval_file_shelter(const Board *b, bool side, U64 file_pawns) {
+    if (!file_pawns) return -36;
+    int r = side ? 0 : 7;
+    // Find rank of closest pawn
+    int best_rank = side ? 0 : 7;
+    U64 pawns = file_pawns;
+    while (pawns) {
+        int sq = pop_lsb(&pawns);
+        int rank = RANK(sq);
+        if (side == WHITE) best_rank = max(best_rank, rank);
+        else               best_rank = min(best_rank, rank);
+    }
+    int rank_from_king = side ? (best_rank - RANK(0)) : (7 - best_rank);
+    // Scale: rank 2 (in front of king on starting rank) = good, rank 6 = bad
+    if (rank_from_king <= 0) return 2;
+    if (rank_from_king == 1) return -11;
+    if (rank_from_king == 2) return -20;
+    if (rank_from_king == 3) return -27;
+    if (rank_from_king == 4) return -32;
+    if (rank_from_king == 5) return -35;
+    return -36;
+}
+
+// Storm bonus for enemy pawns advancing toward our king
+static int eval_file_storm(const Board *b, bool side, U64 file_pawns) {
+    if (!file_pawns) return -16;
+    int best_rank = side ? 7 : 0;
+    U64 pawns = file_pawns;
+    while (pawns) {
+        int sq = pop_lsb(&pawns);
+        int rank = RANK(sq);
+        if (side == WHITE) best_rank = min(best_rank, rank);
+        else               best_rank = max(best_rank, rank);
+    }
+    int rank_from_king = side ? (7 - best_rank) : best_rank;
+    if (rank_from_king == 2) return -32;
+    if (rank_from_king == 3) return -16;
+    if (rank_from_king == 4) return -8;
+    return 0;
+}
+
+// Central files receive reduced shelter bonus
+static const int CENTRAL_FILE_BONUS = 0;  // penalize central shelter less
 
 int king_safety(const Board *b, bool side) {
     int score = 0;
     int king_sq = ctz(b->kings & (side ? b->white : b->black));
     int enemy = side ^ 1;
+    int dir = side ? 1 : -1;  // pawn advance direction for this side
 
-    // King zone: squares the king attacks + one rank/file in front
+    // King zone: squares the king attacks + adjacent rank forward
     U64 king_zone = KING_ATTACKS[king_sq];
     if (side == WHITE) king_zone |= ShiftSouth(king_zone);
     else               king_zone |= ShiftNorth(king_zone);
@@ -660,29 +839,56 @@ int king_safety(const Board *b, bool side) {
     U64 enemy_rooks   = b->rooks   & (enemy ? b->white : b->black);
     U64 enemy_queens  = b->queens  & (enemy ? b->white : b->black);
 
-    int attacks = 0;
-    while (enemy_knights) attacks += (KNIGHT_ATTACKS[pop_lsb(&enemy_knights)] & king_zone) != 0;
-    while (enemy_bishops) attacks += (bb_bishop_attacks(pop_lsb(&enemy_bishops), 0) & king_zone) != 0;
-    while (enemy_rooks)   attacks += (bb_rook_attacks(pop_lsb(&enemy_rooks), 0) & king_zone) != 0;
-    while (enemy_queens)  attacks += ((bb_bishop_attacks(pop_lsb(&enemy_queens), 0) | bb_rook_attacks(pop_lsb(&enemy_queens), 0)) & king_zone) != 0;
+    int attacks = 0, woods = 0;
+    while (enemy_knights) {
+        U64 atk = KNIGHT_ATTACKS[pop_lsb(&enemy_knights)];
+        if (atk & king_zone) { attacks += 5 * popcount(atk & king_zone); woods++; }
+    }
+    while (enemy_bishops) {
+        U64 atk = bb_bishop_attacks(pop_lsb(&enemy_bishops), 0);
+        if (atk & king_zone) { attacks += 4 * popcount(atk & king_zone); woods++; }
+    }
+    while (enemy_rooks) {
+        U64 atk = bb_rook_attacks(pop_lsb(&enemy_rooks), 0);
+        if (atk & king_zone) { attacks += 8 * popcount(atk & king_zone); woods++; }
+    }
+    while (enemy_queens) {
+        U64 atk = bb_bishop_attacks(pop_lsb(&enemy_queens), 0) | bb_rook_attacks(pop_lsb(&enemy_queens), 0);
+        if (atk & king_zone) { attacks += 16 * popcount(atk & king_zone); woods++; }
+    }
 
-    // Pawn shelter: friendly pawns in front of king
-    int dir = side ? 1 : -1;
+    // Score king attacks if own queen is present
+    U64 own_queen = b->queens & (side ? b->white : b->black);
+    if (woods > 1 && own_queen) {
+        score -= attacks * (woods - 1);  // king attack bonus
+    }
+
+    // Pawn shelter: evaluate files in front of king
+    int king_f = FILE(king_sq);
     U64 own_pawns = b->pawns & (side ? b->white : b->black);
-    int shelter = 0;
+    U64 opp_pawns = b->pawns & (enemy ? b->white : b->black);
+
+    // King file + adjacent files
     for (int df = -1; df <= 1; df++) {
-        int f = FILE(king_sq) + df;
+        int f = king_f + df;
         if (f < 0 || f > 7) continue;
-        int pawn_sq = SQUARE(f, RANK(king_sq) + dir);
-        if (pawn_sq >= 0 && pawn_sq < 64 && (own_pawns & SQUARES[pawn_sq])) {
-            shelter += 5;
+        U64 file_pawns_own = own_pawns & FILES[f];
+        U64 file_pawns_opp = opp_pawns & FILES[f];
+        // Find pawns in front of king
+        U64 front_mask = 0;
+        for (int r = 0; r < 8; r++) {
+            int sq = SQUARE(f, r);
+            if (side == WHITE && r > RANK(king_sq)) front_mask |= SQUARES[sq];
+            if (side == BLACK && r < RANK(king_sq)) front_mask |= SQUARES[sq];
+        }
+        int shelter = eval_file_shelter(b, side, file_pawns_own & front_mask);
+        int storm   = eval_file_storm(b, side,   file_pawns_opp & front_mask);
+        if (f >= 2 && f <= 5) {  // central files get halved shelter
+            score += shelter / 2 + storm;
+        } else {
+            score += shelter + storm;
         }
     }
 
-    // Bonus if queen is present to capitalize on attacks
-    U64 own_queen = b->queens & (side ? b->white : b->black);
-    if (own_queen) score -= attacks * KING_ATTACK_WEIGHT;  // enemy attacks on our king = bad
-    score += shelter;
-
-    return -attacks * KING_ATTACK_WEIGHT + shelter;
+    return score;
 }
