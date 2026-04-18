@@ -305,9 +305,32 @@ int evaluate_tapered(const Board *b) {
     mg += bishop_pair_score(b, WHITE) - bishop_pair_score(b, BLACK);
 
     // Passed pawns
-    mg += passed_pawn_score(b, WHITE, 0) - passed_pawn_score(b, BLACK, 0);
+    mg += passed_pawns(b, WHITE) - passed_pawns(b, BLACK);
 
-    // King safety (simplified)
+    // Mobility
+    mg += mobility_score(b, WHITE) - mobility_score(b, BLACK);
+
+    // Knight and bishop outposts
+    {
+        U64 w_knights = b->knights & b->white;
+        while (w_knights) mg += knight_outpost_score(b, WHITE, pop_lsb(&w_knights));
+        U64 b_knights = b->knights & b->black;
+        while (b_knights) mg -= knight_outpost_score(b, BLACK, pop_lsb(&b_knights));
+        U64 w_bishops = b->bishops & b->white;
+        while (w_bishops) mg += bishop_outpost_score(b, WHITE, pop_lsb(&w_bishops));
+        U64 b_bishops = b->bishops & b->black;
+        while (b_bishops) mg -= bishop_outpost_score(b, BLACK, pop_lsb(&b_bishops));
+    }
+
+    // Rook on open/semi-open file
+    {
+        U64 w_rooks = b->rooks & b->white;
+        while (w_rooks) mg += rook_open_file(b, WHITE, pop_lsb(&w_rooks));
+        U64 b_rooks = b->rooks & b->black;
+        while (b_rooks) mg -= rook_open_file(b, BLACK, pop_lsb(&b_rooks));
+    }
+
+    // King safety
     mg += king_safety(b, WHITE) - king_safety(b, BLACK);
 
     // Tapered eval
@@ -443,7 +466,44 @@ int backward_pawns(const Board *b, bool side) {
 
 int passed_pawn_score(const Board *b, bool side, int sq) {
     (void)b; (void)side; (void)sq;
-    return 0;  // Simplified - PeSTO doesn't have explicit passed pawn bonuses
+    return 0;  // Stub - see passed_pawns() below
+}
+
+//=============================================================================
+// Passed Pawns (full implementation)
+//=============================================================================
+
+int passed_pawns(const Board *b, bool side) {
+    int score = 0;
+    U64 pawns = b->pawns & (side ? b->white : b->black);
+    while (pawns) {
+        int sq = pop_lsb(&pawns);
+        int r = RANK(sq);
+        int f = FILE(sq);
+
+        // Check if pawn is passed
+        U64 enemy_pawns = b->pawns & (side ? b->black : b->white);
+        bool passed = true;
+
+        // For white pawns: check ranks r+1 to 7 in same file and adjacent files
+        // For black pawns: check ranks 0 to r-1
+        int start = side ? r + 1 : 0;
+        int end   = side ? 8   : r;
+
+        for (int check_r = start; check_r < end && passed; check_r++) {
+            for (int check_f = max(0, f - 1); check_f <= min(7, f + 1) && passed; check_f++) {
+                if (enemy_pawns & SQUARES[SQUARE(check_f, check_r)])
+                    passed = false;
+            }
+        }
+
+        if (passed) {
+            // Scale by rank — further up = more dangerous
+            int rank_idx = side ? r : (7 - r);
+            score += PASSED_PAWN_MG[side][rank_idx];
+        }
+    }
+    return score;
 }
 
 //=============================================================================
@@ -457,10 +517,172 @@ int bishop_pair_score(const Board *b, bool side) {
 }
 
 //=============================================================================
+// Mobility
+//=============================================================================
+
+int mobility_score(const Board *b, bool side) {
+    int mg = 0;
+    U64 occ = b->white | b->black;
+
+    // Knights
+    U64 knights = b->knights & (side ? b->white : b->black);
+    while (knights) {
+        int sq = pop_lsb(&knights);
+        U64 attacks = KNIGHT_ATTACKS[sq] & ~occ;
+        int n = popcount(attacks);
+        mg += MOBILITY_KNIGHT * (n - 4);  // baseline 4 attack squares
+    }
+
+    // Bishops
+    U64 bishops = b->bishops & (side ? b->white : b->black);
+    while (bishops) {
+        int sq = pop_lsb(&bishops);
+        U64 attacks = bb_bishop_attacks(sq, occ) & ~occ;
+        int n = popcount(attacks);
+        mg += MOBILITY_BISHOP * (n - 7);  // baseline 7 attack squares
+    }
+
+    // Rooks
+    U64 rooks = b->rooks & (side ? b->white : b->black);
+    while (rooks) {
+        int sq = pop_lsb(&rooks);
+        U64 attacks = bb_rook_attacks(sq, occ) & ~occ;
+        int n = popcount(attacks);
+        mg += MOBILITY_ROOK * (n - 7);  // baseline 7 attack squares
+    }
+
+    // Queens
+    U64 queens = b->queens & (side ? b->white : b->black);
+    while (queens) {
+        int sq = pop_lsb(&queens);
+        U64 attacks = (bb_bishop_attacks(sq, occ) | bb_rook_attacks(sq, occ)) & ~occ;
+        int n = popcount(attacks);
+        mg += MOBILITY_QUEEN * (n - 14);  // baseline 14 attack squares
+    }
+
+    return mg;
+}
+
+//=============================================================================
+// Rook on Open / Semi-Open File
+//=============================================================================
+
+int rook_open_file(const Board *b, bool side, int sq) {
+    int f = FILE(sq);
+    U64 file_pawns = b->pawns & FILES[f];
+    U64 own_pawns = file_pawns & (side ? b->white : b->black);
+    U64 enemy_pawns = file_pawns & (side ? b->black : b->white);
+
+    if (!own_pawns) {
+        // Open file
+        if (!enemy_pawns) return ROOK_OPEN_FILE;
+        // Semi-open file
+        return ROOK_SEMIOPEN;
+    }
+    return 0;
+}
+
+int rook_semiopen(const Board *b, bool side, int sq) {
+    return rook_open_file(b, side, sq);  // simplified: same function handles both
+}
+
+//=============================================================================
+// Outpost Score (Knights and Bishops)
+//=============================================================================
+
+int knight_outpost_score(const Board *b, bool side, int sq) {
+    // A knight outpost is: protected by a pawn, can't be attacked by enemy pawns
+    int dir = side ? 1 : -1;  // pawn advance direction for this side
+    int prom_rank = side ? 7 : 0;
+
+    // Check if protected by own pawn
+    U64 protector = 0;
+    int f = FILE(sq);
+    int r = RANK(sq);
+    if (f > 0 && r >= 1 && r <= 6)
+        protector |= SQUARES[SQUARE(f - 1, r - dir)];
+    if (f < 7 && r >= 1 && r <= 6)
+        protector |= SQUARES[SQUARE(f + 1, r - dir)];
+
+    U64 own_pawns = b->pawns & (side ? b->white : b->black);
+    U64 enemy_pawns = b->pawns & (side ? b->black : b->white);
+    bool protected_by_pawn = (protector & own_pawns) != 0;
+    bool safe_from_pawns = ((KNIGHT_ATTACKS[sq] & enemy_pawns) == 0);
+
+    if (!protected_by_pawn || !safe_from_pawns) return 0;
+
+    // Bonus scales with rank — deeper into enemy territory = better
+    int rank = side ? r : (7 - r);
+    if (rank >= 4) return OUTPOST_MIN + (rank - 4) * 4;
+    if (rank >= 3) return OUTPOST_MIN / 2;
+    return 0;
+}
+
+int bishop_outpost_score(const Board *b, bool side, int sq) {
+    int dir = side ? 1 : -1;
+    int r = RANK(sq);
+    int f = FILE(sq);
+
+    U64 protector = 0;
+    if (f > 0 && r >= 1 && r <= 6) protector |= SQUARES[SQUARE(f - 1, r - dir)];
+    if (f < 7 && r >= 1 && r <= 6) protector |= SQUARES[SQUARE(f + 1, r - dir)];
+
+    U64 own_pawns = b->pawns & (side ? b->white : b->black);
+    U64 enemy_pawns = b->pawns & (side ? b->black : b->white);
+    bool protected_by_pawn = (protector & own_pawns) != 0;
+    bool safe_from_pawns = ((bb_bishop_attacks(sq, 0) & enemy_pawns) == 0);
+
+    if (!protected_by_pawn || !safe_from_pawns) return 0;
+
+    int rank = side ? r : (7 - r);
+    if (rank >= 4) return OUTPOST_MIN + (rank - 4) * 4;
+    if (rank >= 3) return OUTPOST_MIN / 2;
+    return 0;
+}
+
+//=============================================================================
 // King Safety
 //=============================================================================
 
 int king_safety(const Board *b, bool side) {
-    (void)b; (void)side;
-    return 0;  // Simplified - PeSTO relies on PST for king safety
+    int score = 0;
+    int king_sq = ctz(b->kings & (side ? b->white : b->black));
+    int enemy = side ^ 1;
+
+    // King zone: squares the king attacks + one rank/file in front
+    U64 king_zone = KING_ATTACKS[king_sq];
+    if (side == WHITE) king_zone |= ShiftSouth(king_zone);
+    else               king_zone |= ShiftNorth(king_zone);
+
+    // Count enemy attacks on king zone by pieces (not pawns)
+    U64 enemy_knights = b->knights & (enemy ? b->white : b->black);
+    U64 enemy_bishops = b->bishops & (enemy ? b->white : b->black);
+    U64 enemy_rooks   = b->rooks   & (enemy ? b->white : b->black);
+    U64 enemy_queens  = b->queens  & (enemy ? b->white : b->black);
+
+    int attacks = 0;
+    while (enemy_knights) attacks += (KNIGHT_ATTACKS[pop_lsb(&enemy_knights)] & king_zone) != 0;
+    while (enemy_bishops) attacks += (bb_bishop_attacks(pop_lsb(&enemy_bishops), 0) & king_zone) != 0;
+    while (enemy_rooks)   attacks += (bb_rook_attacks(pop_lsb(&enemy_rooks), 0) & king_zone) != 0;
+    while (enemy_queens)  attacks += ((bb_bishop_attacks(pop_lsb(&enemy_queens), 0) | bb_rook_attacks(pop_lsb(&enemy_queens), 0)) & king_zone) != 0;
+
+    // Pawn shelter: friendly pawns in front of king
+    int dir = side ? 1 : -1;
+    U64 own_pawns = b->pawns & (side ? b->white : b->black);
+    int shelter = 0;
+    for (int df = -1; df <= 1; df++) {
+        int f = FILE(king_sq) + df;
+        if (f < 0 || f > 7) continue;
+        int pawn_sq = SQUARE(f, RANK(king_sq) + dir);
+        if (pawn_sq >= 0 && pawn_sq < 64 && (own_pawns & SQUARES[pawn_sq])) {
+            shelter += 5;
+        }
+    }
+
+    // Bonus if queen is present to capitalize on attacks
+    U64 own_queen = b->queens & (side ? b->white : b->black);
+    if (own_queen) score -= attacks * KING_ATTACK_WEIGHT;  // enemy attacks on our king = bad
+    score += shelter;
+
+    return -attacks * KING_ATTACK_WEIGHT + shelter;
 }

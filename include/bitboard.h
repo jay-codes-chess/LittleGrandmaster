@@ -14,6 +14,12 @@ extern U64 KNIGHT_SPAN[64];
 extern U64 KING_SPAN[64];
 extern U64 PAWN_ATTACKS_W[64];
 extern U64 PAWN_ATTACKS_B[64];
+extern U64 KNIGHT_ATTACKS[64];
+extern U64 KING_ATTACKS[64];
+
+// Shift operations
+static inline U64 ShiftNorth(U64 b) { return b << 8; }
+static inline U64 ShiftSouth(U64 b) { return b >> 8; }
 extern U64 CENTER;
 extern U64 BIG_CENTER;
 

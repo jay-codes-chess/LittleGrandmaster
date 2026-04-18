@@ -36,8 +36,38 @@ extern const int16_t PST_EG[13][64];
 // Evaluation Terms
 //=============================================================================
 
+// Mobility bonuses (per available square beyond baseline)
+#define MOBILITY_KNIGHT  4
+#define MOBILITY_BISHOP  5
+#define MOBILITY_ROOK    3
+#define MOBILITY_QUEEN   2
+
+// Passed pawn bonuses by rank [rank 0-7]
+static const int PASSED_PAWN_MG[2][8] = {
+    { 0, 12, 12, 30, 50, 80, 130, 0 },  // white (ranks 0-7 from white's perspective)
+    { 0, 120, 80, 50, 30, 12, 12, 0 }   // black
+};
+static const int PASSED_PAWN_EG[2][8] = {
+    { 0, 16, 16, 39, 65, 104, 156, 0 },
+    { 0, 156, 104, 65, 39, 16, 16, 0 }
+};
+
+// Rook on open file / semi-open file
+#define ROOK_OPEN_FILE   12
+#define ROOK_SEMIOPEN     6
+
+// Outpost bonuses
+#define OUTPOST_MIN      8
+#define OUTPOST_MAX     24
+
+// King safety
+#define KING_ATTACK_WEIGHT  5  // weight per attack on king zone
+#define KING_SHELTER_BASE  20  // base bonus for pawn shield
+
 int material_score(const Board *b);
+int material_score_eg(const Board *b);
 int pawn_score(const Board *b);
+int pawn_structure(const Board *b);
 int king_safety(const Board *b, bool side);
 
 // Bishop pair
@@ -49,6 +79,11 @@ int rook_semiopen(const Board *b, bool side, int sq);
 
 // Passed pawns
 int passed_pawn_score(const Board *b, bool side, int sq);
+int passed_pawns(const Board *b, bool side);  // sum over all passed pawns
+
+// Outposts
+int knight_outpost_score(const Board *b, bool side, int sq);
+int bishop_outpost_score(const Board *b, bool side, int sq);
 
 // Pawn weaknesses
 int doubled_pawns(const Board *b, bool side);

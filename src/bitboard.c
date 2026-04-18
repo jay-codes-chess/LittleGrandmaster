@@ -15,6 +15,8 @@ U64 FILES[8];
 U64 RANKS[8];
 U64 KNIGHT_SPAN[64];
 U64 KING_SPAN[64];
+U64 KNIGHT_ATTACKS[64];
+U64 KING_ATTACKS[64];
 U64 PAWN_ATTACKS_W[64];
 U64 PAWN_ATTACKS_B[64];
 U64 CENTER;
@@ -143,6 +145,12 @@ void bb_init(void) {
                     if (c + dc >= 0 && c + dc < 8 && r + dr >= 0 && r + dr < 8)
                         attacks |= SQUARES[SQUARE(c + dc, r + dr)];
         KING_SPAN[sq] = attacks;
+    }
+
+    // Knight and King attack tables (same as SPAN, non-sliding)
+    for (int sq = 0; sq < 64; sq++) {
+        KNIGHT_ATTACKS[sq] = KNIGHT_SPAN[sq];
+        KING_ATTACKS[sq]   = KING_SPAN[sq];
     }
 
     // Pawn attacks
