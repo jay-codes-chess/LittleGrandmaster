@@ -94,6 +94,12 @@ void uci_position(Board *b, char *args) {
         while (*p == ' ') p++;
         if (!*p || *p == '\n') break;
 
+        // Skip the "moves" keyword if present (GUI sends "position startpos moves e2e4")
+        if (strncmp(p, "moves", 5) == 0 && (p[5] == ' ' || !p[5])) {
+            p += 5;
+            continue;
+        }
+
         char move_str[8] = {0};
         int i = 0;
         while (*p && *p != ' ' && i < 6) move_str[i++] = *p++;
