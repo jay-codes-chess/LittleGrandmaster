@@ -15,18 +15,12 @@ jobs:
       - name: Build
         run: |
           gcc --version
-          pwd
-          ls
           make clean
           make CC=gcc CFLAGS="-O3 -march=x86-64-v2 -Wall -std=c11 -Iinclude"
         shell: bash
 
       - name: Rename
-        run: |
-          pwd
-          ls -la
-          mv LittleGrandmaster LittleGrandmaster-Windows-x86_64.exe
-          ls -la
+        run: mv LittleGrandmaster "LittleGrandmaster-Windows-x86_64.exe"
         shell: bash
 
       - name: Upload Artifact
