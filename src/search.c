@@ -153,20 +153,23 @@ void history_clear(History *h) {
 }
 
 int history_score(const History *h, bool side, Move *m) {
-    (void)h; (void)side; (void)m;
-    return 0;
+    return h->history[side][m->from][m->to];
 }
 
 void history_add_successful(History *h, bool side, Move *m, int depth) {
-    (void)h; (void)side; (void)m; (void)depth;
+    int bonus = min(3000, 1000 + 1000 * depth);
+    int *entry = &h->history[side][m->from][m->to];
+    *entry += bonus - (*entry * bonus / 3000);
+    if (*entry > 3000) *entry = 3000;
 }
 
 void history_add_failure(History *h, bool side, Move *m) {
-    (void)h; (void)side; (void)m;
+    int *entry = &h->history[side][m->from][m->to];
+    *entry -= 200;
+    if (*entry < -3000) *entry = -3000;
 }
-
 void history_update(History *h, Move *m, int depth, int side) {
-    (void)h; (void)m; (void)depth; (void)side;
+    history_add_successful(h, side, m, depth);
 }
 
 // Counter moves
@@ -327,7 +330,7 @@ int search_pv(Board *b, int depth, int alpha, int beta, SearchInfo *info, PV *pv
     // Generate moves
     Movelist ml;
     generate_moves(b, &ml);
-    score_moves(&ml, b, &tt_move, depth);
+    score_moves(&ml, b, &tt_move, depth, &s_history, &s_killers, ply);
 
     // Move ordering: TT move already at top via scoring
     sort_moves_insertion(&ml, 0);
@@ -350,7 +353,19 @@ int search_pv(Board *b, int depth, int alpha, int beta, SearchInfo *info, PV *pv
             continue;
         }
 
+
         legal++;
+
+        if (should_stop(info, b)) {
+            *b = copy;
+            return 0;
+        }
+
+        time_check(info, b);
+        if (should_stop(info, b)) {
+            *b = copy;
+            return 0;
+        }
 
         bool is_capture = m.flags & FLAG_CAPTURE;
         bool is_promo = m.flags & FLAG_PROMOTION;
@@ -432,6 +447,7 @@ int search_pv(Board *b, int depth, int alpha, int beta, SearchInfo *info, PV *pv
         if (score >= beta) {
             if (!(m.flags & FLAG_CAPTURE)) {
                 killers_add(&s_killers, &m, ply);
+                history_add_successful(&s_history, !b->side, &m, depth);
             }
             tt_store(b->hash, &m, depth, value_to_tt(beta, ply), TT_FLAG_BETA);
             return beta;

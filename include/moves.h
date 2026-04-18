@@ -51,7 +51,7 @@ void move_to_san(const Board *b, Move *m, char *buf);
 // Move Ordering
 //=============================================================================
 
-void score_moves(Movelist *ml, const Board *b, Move *tt_move, int depth);
+void score_moves(Movelist *ml, const Board *b, Move *tt_move, int depth, History *h, KillerTable *kt, int ply);
 void score_moves_qsearch(Movelist *ml, const Board *b);
 void sort_moves(Movelist *ml, int start);
 void sort_moves_insertion(Movelist *ml, int start);

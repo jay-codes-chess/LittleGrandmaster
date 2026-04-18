@@ -445,17 +445,22 @@ void move_to_san(const Board *b, Move *m, char *buf) {
 static const int MVV_LVA_VICTIM[7] = {0, 100, 200, 300, 400, 500, 600};
 static const int MVV_LVA_ATTACKER[7] = {0, 10, 20, 30, 40, 50, 60};
 
-void score_moves(Movelist *ml, const Board *b, Move *tt_move, int depth) {
-    (void)depth;
+void score_moves(Movelist *ml, const Board *b, Move *tt_move, int depth, History *h, KillerTable *kt, int ply) {
     for (int i = 0; i < ml->count; i++) {
         Move *m = &ml->moves[i];
         int score = 0;
+
 
         if (tt_move && move_equal(m, tt_move)) {
             score = 200000;
         } else if (m->flags & FLAG_CAPTURE) {
             score = MVV_LVA_VICTIM[PT(m->captured)] - MVV_LVA_ATTACKER[PT(m->piece)];
             score += 100000;
+        } else {
+            // History score for quiet moves
+            score = history_score(h, b->side, m);
+            // Killer move bonus
+            if (is_killer(kt, m, ply)) score += 5000;
         }
         m->score = score;
     }
