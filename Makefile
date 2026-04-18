@@ -10,7 +10,9 @@ SRC = src/main.c \
       src/search.c \
       src/uci.c \
       src/eval.c \
-      src/hash.c
+      src/hash.c \
+      src/tuner.c \
+      src/selfplay.c
 
 OBJ = $(SRC:.c=.o)
 BIN = LittleGrandmaster

@@ -11,6 +11,7 @@ extern volatile bool stop_flag;
 #include "eval.h"
 #include "hash.h"
 #include "bitboard.h"
+#include "tuner.h"
 
 //=============================================================================
 // UCI Input Line
@@ -283,6 +284,33 @@ void uci_loop(void) {
             }
             int64_t elapsed = (clock() - start) * 1000 / CLOCKS_PER_SEC;
             printf("total: %llu in %lld ms\n", (unsigned long long)total, (long long)elapsed);
+        } else if (strncmp(input_line, "tune", 4) == 0) {
+            // Usage: tune <data_file> [epochs=50] [lr=0.01] [lambda=0.001] [batch=4096]
+            char args[256] = {0};
+            char filename[256] = {0};
+            int epochs = 50;
+            double lr = 0.01;
+            double lambda = 0.001;
+            int batch = 4096;
+            if (strlen(input_line) > 5) {
+                strncpy(args, input_line + 5, sizeof(args) - 1);
+                char *tok = strtok(args, " \t");
+                if (tok) { strncpy(filename, tok, sizeof(filename) - 1); tok = strtok(NULL, " \t"); }
+                if (tok) epochs = atoi(tok);
+                tok = strtok(NULL, " \t"); if (tok) lr = atof(tok);
+                tok = strtok(NULL, " \t"); if (tok) lambda = atof(tok);
+                tok = strtok(NULL, " \t"); if (tok) batch = atoi(tok);
+            }
+            if (filename[0] == 0) {
+                printf("Usage: tune <data.epd> [epochs] [lr] [lambda] [batch]\n");
+                printf("  data.epd: file with FEN \"result\" lines (e.g., from self-play)\n");
+                printf("  epochs:   number of SGD iterations (default 50)\n");
+                printf("  lr:       learning rate (default 0.01)\n");
+                printf("  lambda:   L2 regularization (default 0.001)\n");
+                printf("  batch:    mini-batch size (default 4096)\n");
+            } else {
+                tuner_run(filename, epochs, lr, lambda, batch);
+            }
         } else {
             // Unknown command
         }

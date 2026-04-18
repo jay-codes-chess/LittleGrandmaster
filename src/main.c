@@ -9,10 +9,21 @@
 #include "hash.h"
 #include "uci.h"
 #include "bitboard.h"
+#include "tuner.h"
+
+// Self-play data generator
+void selfplay_generate(int num_games, int depth, const char *output);
 
 int main(int argc, char *argv[]) {
-    (void)argc;
-    (void)argv;
+    // Self-play data generation (standalone mode)
+    if (argc >= 2 && strcmp(argv[1], "selfplay") == 0) {
+        int num_games = (argc >= 3) ? atoi(argv[2]) : 500;
+        int depth = (argc >= 4) ? atoi(argv[3]) : 4;
+        const char *output = (argc >= 5) ? argv[4] : "training.epd";
+        selfplay_generate(num_games, depth, output);
+        tt_free();
+        return 0;
+    }
 
     // Initialize
     bb_init();
@@ -20,7 +31,7 @@ int main(int argc, char *argv[]) {
     eval_init();
     tt_init(256);
 
-    // If given a FEN and depth, run perft
+    // Perft mode
     if (argc >= 3 && strcmp(argv[1], "perft") == 0) {
         Board b;
         board_load_fen(&b, argv[2]);
@@ -35,15 +46,13 @@ int main(int argc, char *argv[]) {
         return 0;
     }
 
-    // If given "bench", run benchmark
+    // Benchmark mode
     if (argc >= 2 && strcmp(argv[1], "bench") == 0) {
         printf("Little Grandmaster Benchmark\n");
         printf("============================\n");
-
         const char *fen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
         Board b;
         board_load_fen(&b, fen);
-
         int64_t start = clock();
         uint64_t total = 0;
         for (int d = 1; d <= 6; d++) {
