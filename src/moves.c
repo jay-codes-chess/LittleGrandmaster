@@ -4,6 +4,7 @@
 #include "moves.h"
 #include "board.h"
 #include "bitboard.h"
+#include "search.h"
 
 //=============================================================================
 // Move List
@@ -61,7 +62,7 @@ static void add_capture(const Board *b, Movelist *ml, int from, int to, int flag
 // Pseudo-Legal Move Generation
 //=============================================================================
 
-void generate_moves(const Board *b, Movelist *ml) {
+void generate_moves(Board *b, Movelist *ml) {
     movelist_clear(ml);
     bool side = b->side;
     U64 us = side ? b->white : b->black;
@@ -166,7 +167,7 @@ void generate_moves(const Board *b, Movelist *ml) {
     }
 }
 
-void generate_captures(const Board *b, Movelist *ml) {
+void generate_captures(Board *b, Movelist *ml) {
     movelist_clear(ml);
     bool side = b->side;
     U64 us = side ? b->white : b->black;
@@ -230,7 +231,7 @@ void generate_captures(const Board *b, Movelist *ml) {
     }
 }
 
-void generate_quiets(const Board *b, Movelist *ml) {
+void generate_quiets(Board *b, Movelist *ml) {
     movelist_clear(ml);
     bool side = b->side;
     U64 us = side ? b->white : b->black;
@@ -358,7 +359,7 @@ void generate_legal_quiets(Board *b, Movelist *ml) {
 // Move Parsing / Formatting
 //=============================================================================
 
-Move move_from_uci(const Board *b, const char *uci) {
+Move move_from_uci(Board *b, const char *uci) {
     if (strlen(uci) < 4) return (Move){0, 0, 0, 0, 0, 0};
     int from = (uci[0] - 'a') + (uci[1] - '1') * 8;
     int to = (uci[2] - 'a') + (uci[3] - '1') * 8;
@@ -385,7 +386,7 @@ void move_to_uci(Move *m, char *buf, bool pretty) {
     }
 }
 
-Move move_from_san(const Board *b, const char *san) {
+Move move_from_san(Board *b, const char *san) {
     Movelist ml;
     generate_legal(b, &ml);
 
@@ -413,7 +414,7 @@ Move move_from_san(const Board *b, const char *san) {
     return (Move){0, 0, 0, 0, 0, 0};
 }
 
-void move_to_san(const Board *b, Move *m, char *buf) {
+void move_to_san(Board *b, Move *m, char *buf) {
     if (m->flags & FLAG_CASTLE) {
         sprintf(buf, "%s", m->to > m->from ? "O-O" : "O-O-O");
         return;
@@ -445,7 +446,7 @@ void move_to_san(const Board *b, Move *m, char *buf) {
 static const int MVV_LVA_VICTIM[7] = {0, 100, 200, 300, 400, 500, 600};
 static const int MVV_LVA_ATTACKER[7] = {0, 10, 20, 30, 40, 50, 60};
 
-void score_moves(Movelist *ml, const Board *b, Move *tt_move, int depth, History *h, KillerTable *kt, int ply) {
+void score_moves(Movelist *ml, Board *b, Move *tt_move, int depth, History *h, KillerTable *kt, int ply) {
     for (int i = 0; i < ml->count; i++) {
         Move *m = &ml->moves[i];
         int score = 0;
@@ -466,7 +467,7 @@ void score_moves(Movelist *ml, const Board *b, Move *tt_move, int depth, History
     }
 }
 
-void score_moves_qsearch(Movelist *ml, const Board *b) {
+void score_moves_qsearch(Movelist *ml, Board *b) {
     (void)b;
     for (int i = 0; i < ml->count; i++) {
         Move *m = &ml->moves[i];
@@ -510,7 +511,7 @@ int pick_best(Movelist *ml, int start) {
 
 static const int SEE_VALS[7] = {0, 1, 3, 3, 5, 9, 100};
 
-int see(const Board *b, Move *m) {
+int see(Board *b, Move *m) {
     if (m->flags & FLAG_CASTLE) return 0;
 
     int from = m->from, to = m->to;
@@ -594,7 +595,7 @@ int see(const Board *b, Move *m) {
     return gain[0];
 }
 
-int see_sign(const Board *b, Move *m) {
+int see_sign(Board *b, Move *m) {
     return see(b, m) >= 0;
 }
 

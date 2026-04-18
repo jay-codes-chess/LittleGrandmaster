@@ -143,14 +143,15 @@ def extract_features(fen):
         if f not in pawn_files: b_ro += 1
         else: b_rs += 1
 
-    # Normalized features: (attack_count - baseline) / baseline
-    # This makes each feature ~0 when at baseline, ±0.5 when ±1 from baseline
+    # Raw features: attack_count - baseline (EXACTLY matches engine mobility formula)
+    # Engine: mobN_contrib = MOBILITY_KNIGHT * (attacks_N - 4)
+    # So feature = (attacks - baseline), param corresponds 1:1 with cp
     return {
-        "mobN": (mn - 4) / 4.0,   # normalized by baseline 4
-        "mobB": (mb - 7) / 7.0,   # normalized by baseline 7
-        "mobR": (mr - 7) / 7.0,   # normalized by baseline 7
-        "mobQ": (mq - 14) / 14.0, # normalized by baseline 14
-        "bishop_pair": w_bp - b_bp,  # -1, 0, or 1
+        "mobN": mn - 4,    # 0 = baseline 4 attacks, ±1 per extra/missing attack
+        "mobB": mb - 7,    # 0 = baseline 7 attacks
+        "mobR": mr - 7,    # 0 = baseline 7 attacks
+        "mobQ": mq - 14,   # 0 = baseline 14 attacks
+        "bishop_pair": w_bp - b_bp,  # 1 = has pair, 0 = no pair, -1 = opponent has pair
         "rook_open": w_ro - b_ro,    # count difference
         "rook_semiopen": w_rs - b_rs,  # count difference
     }
