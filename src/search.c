@@ -207,7 +207,6 @@ bool is_killer(const KillerTable *kt, Move *m, int ply) {
 // Minimal qsearch - captures only with hard ply limit
 int search_quiescence(Board *b, int alpha, int beta, SearchInfo *info, int ply) {
     // Hard ply limit - prevent infinite recursion
-    if (ply >= 6) return evaluate(b);
     
     info->nodes++;
     
@@ -260,7 +259,6 @@ int search_pv(Board *b, int depth, int alpha, int beta, SearchInfo *info, PV *pv
     if (stop_flag) return 0;
 
     // Hard ply limit to prevent stack overflow - must be before any local allocations
-    if (ply >= 6) return evaluate(b);
 
     info->nodes++;
     if (ply > info->seldepth) info->seldepth = ply;
