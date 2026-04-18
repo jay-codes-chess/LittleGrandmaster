@@ -64,23 +64,27 @@ void uci_position(Board *b, char *args) {
         board_reset(b);
         p += 8;
     } else if (strncmp(p, "fen", 3) == 0) {
-        p += 4;
-        char *fen_end = p + strlen(p);
-        // Find the "moves" token
-        while (p < fen_end) {
-            while (*p == ' ') p++;
-            if (strncmp(p, "moves", 5) == 0) break;
-            p++;
+        // FEN string: skip past "fen " to the FEN itself
+        while (*p && *p != ' ' && *p != '\n') p++;  // skip "fen"
+        while (*p == ' ') p++;  // skip space
+        char *fen_start = p;
+        char *fen_end = fen_start + strlen(fen_start);
+        // Find the "moves" token to know where FEN ends
+        char *moves_ptr = NULL;
+        for (char *q = fen_start; q < fen_end; q++) {
+            while (*q == ' ') q++;
+            if (strncmp(q, "moves", 5) == 0) { moves_ptr = q; break; }
         }
-        if (p > fen_end) {
-            board_load_fen(b, "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-            return;
+        if (moves_ptr) {
+            char save = *moves_ptr;
+            *moves_ptr = '\0';
+            board_load_fen(b, fen_start);
+            *moves_ptr = save;
+            p = moves_ptr + 5;
+        } else {
+            board_load_fen(b, fen_start);
+            p = fen_end;
         }
-        char save = *p;
-        *p = '\0';
-        board_load_fen(b, args + 4);
-        *p = save;
-        p += 5;
     } else {
         board_reset(b);
     }
@@ -242,7 +246,6 @@ void uci_loop(void) {
             printf("id author %s\n", ENGINE_AUTHOR);
             printf("uciok\n");
         } else if (strcmp(input_line, "isready") == 0) {
-            board_reset(&board);
             printf("readyok\n");
         } else if (strcmp(input_line, "ucinewgame") == 0) {
             tt_clear();
