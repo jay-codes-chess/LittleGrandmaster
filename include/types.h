@@ -249,9 +249,9 @@ typedef struct {
 
 // History heuristic
 typedef struct {
-    int16_t history[2][64][64];
-    int16_t counter_moves[2][64][64];
-    int16_t followup_moves[2][64][64];
+    int history[2][64][64];
+    int counter_moves[2][64][64];
+    int followup_moves[2][64][64];
 } History;
 
 // Killer moves

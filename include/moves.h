@@ -13,7 +13,7 @@ void movelist_add(Movelist *ml, Move *m);
 Move *movelist_get(Movelist *ml, int i);
 
 void move_copy(Move *dst, const Move *src);
-bool move_equal(Move *a, Move *b);
+bool move_equal(const Move *a, const Move *b);
 bool move_is_capture(Move *m);
 bool move_is_promotion(Move *m);
 bool move_is_castle(Move *m);

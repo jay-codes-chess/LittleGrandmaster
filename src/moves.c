@@ -20,7 +20,7 @@ Move *movelist_get(Movelist *ml, int i) { return &ml->moves[i]; }
 
 void move_copy(Move *dst, const Move *src) { *dst = *src; }
 
-bool move_equal(Move *a, Move *b) {
+bool move_equal(const Move *a, const Move *b) {
     return a->from == b->from && a->to == b->to;
 }
 
