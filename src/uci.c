@@ -242,6 +242,7 @@ void uci_loop(void) {
             printf("id author %s\n", ENGINE_AUTHOR);
             printf("uciok\n");
         } else if (strcmp(input_line, "isready") == 0) {
+            board_reset(&board);
             printf("readyok\n");
         } else if (strcmp(input_line, "ucinewgame") == 0) {
             tt_clear();
