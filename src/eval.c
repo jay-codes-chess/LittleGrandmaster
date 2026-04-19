@@ -422,6 +422,77 @@ int evaluate_tapered(const Board *b) {
     // Tempo bonus (both mg and eg, like Rodent)
     score += (b->side ? 10 : -10);
 
+    //----------------------------------------------------------------
+    // DEVELOPMENT & OPENING PRINCIPLES
+    //----------------------------------------------------------------
+    // 1. Development bonus — reward pieces off starting rank
+    {
+        U64 w_knights = b->knights & b->white;
+        U64 b_knights = b->knights & b->black;
+        while (w_knights) {
+            int sq = pop_lsb(&w_knights);
+            score += (RANK(sq) > 0) ? 5 : -3;
+        }
+        while (b_knights) {
+            int sq = pop_lsb(&b_knights);
+            score -= (RANK(sq) < 7) ? 5 : -3;
+        }
+
+        U64 w_bishops = b->bishops & b->white;
+        U64 b_bishops = b->bishops & b->black;
+        score -= popcount(w_bishops & (SQUARES[2] | SQUARES[5])) * 4;
+        score += popcount(b_bishops & (SQUARES[58] | SQUARES[61])) * 4;
+        while (w_bishops) {
+            int sq = pop_lsb(&w_bishops);
+            score += (RANK(sq) > 0) ? 3 : 0;
+        }
+        while (b_bishops) {
+            int sq = pop_lsb(&b_bishops);
+            score -= (RANK(sq) < 7) ? 3 : 0;
+        }
+    }
+
+    // 2. Center control — pawns in/near center
+    {
+        U64 w_pawns = b->pawns & b->white;
+        U64 b_pawns = b->pawns & b->black;
+        while (w_pawns) {
+            int sq = pop_lsb(&w_pawns);
+            if (FILE(sq) >= 3 && FILE(sq) <= 4 && RANK(sq) >= 3) score += 2;
+        }
+        while (b_pawns) {
+            int sq = pop_lsb(&b_pawns);
+            if (FILE(sq) >= 3 && FILE(sq) <= 4 && RANK(sq) <= 4) score -= 2;
+        }
+    }
+
+    // 3. Bad bishop — trapped behind own pawns
+    {
+        U64 w_bishops = b->bishops & b->white;
+        U64 b_bishops = b->bishops & b->black;
+        if (w_bishops & SQUARES[2]) {
+            if (b->pawns & b->white & (SQUARES[1] | SQUARES[3])) score -= 15;
+        }
+        if (w_bishops & SQUARES[5]) {
+            if (b->pawns & b->white & (SQUARES[4] | SQUARES[6])) score -= 15;
+        }
+        if (b_bishops & SQUARES[58]) {
+            if (b->pawns & b->black & (SQUARES[57] | SQUARES[59])) score += 15;
+        }
+        if (b_bishops & SQUARES[61]) {
+            if (b->pawns & b->black & (SQUARES[60] | SQUARES[62])) score += 15;
+        }
+    }
+
+    // 4. Castling bonus — castled king is safer
+    {
+        U64 w_king = b->kings & b->white;
+        U64 b_king = b->kings & b->black;
+        if (w_king & (SQUARES[6] | SQUARES[2])) score += 20;
+        if (b_king & (SQUARES[62] | SQUARES[58])) score -= 20;
+    }
+
+    //----------------------------------------------------------------
     // Draw scaling
     int df = draw_factor(b, b->side);
     score = (score * df) / 64;
